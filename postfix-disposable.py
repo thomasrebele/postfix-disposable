@@ -17,17 +17,15 @@ prefix="dm-"
 # read configuration
 #--------------------------------------------------------------------------------
 def config_help():
-	print("Configuration does not define a key.")
-	print("Create a file named 'secret_config.py' containing")
-	print("secret = \"my secret key\"")
+	print("Configuration is incomplete.")
+	print("Create a file 'secret_config.py', following the example of example_secret_config.py")
 
 try:
-	from secret_config import secret
-except:
-	config_help()
-	sys.exit(1)
+	from secret_config import *
+	create_psycopg2_connection
+	secret
 
-if not secret:
+except:
 	config_help()
 	sys.exit(1)
 
@@ -235,7 +233,7 @@ class DisposableRewriteSMTPServer(smtpd.SMTPServer):
 # print("replying without disposable: " + str(replace_with_disposable("me@example.com", "someone-else@example.org")))
 
 if __name__ == '__main__':
-	conn = psycopg2.connect(host="127.0.0.1", dbname="mailserver", user="mailuser", password="DB-PASSWORD")
+	conn = create_psycopg2_connection()
 	conn.set_session(autocommit=True)
 
 	with conn.cursor() as cur:
