@@ -18,10 +18,10 @@ prefix="dm-"
 #--------------------------------------------------------------------------------
 def config_help():
 	print("Configuration is incomplete.")
-	print("Create a file 'secret_config.py', following the example of example_secret_config.py")
+	print("Create a file 'disposable_config.py', following the example of example_disposable_config.py")
 
 try:
-	from secret_config import *
+	from disposable_config import *
 	create_psycopg2_connection
 	secret
 
@@ -79,13 +79,13 @@ def create_disposable_alias(token, local):
 	local_hash2 = bytes([a ^ b for (a,b) in zip(local_hash1, token_h2)])
 	local_hash = b32enc(local_hash2)[:8]
 
-	# example code for retrieving local hash
-	local_hash2_dec = b32dec(local_hash)
-	local_hash1_dec = bytes([a ^ b for (a,b) in zip(local_hash2_dec, token_h2)])
-	if not local_hash1_dec == local_hash1:
-		print("ERROR: "+ b32enc(local_hash1_dec) + "  " + b32enc(local_hash1))
-	else:
-		print("Decoding successful")
+	# # example code for retrieving local hash
+	# local_hash2_dec = b32dec(local_hash)
+	# local_hash1_dec = bytes([a ^ b for (a,b) in zip(local_hash2_dec, token_h2)])
+	# if not local_hash1_dec == local_hash1:
+	# 	print("ERROR: "+ b32enc(local_hash1_dec) + "  " + b32enc(local_hash1))
+	# else:
+	# 	print("Decoding successful")
 
 	sig = version + token_hash + local_hash
 	domain = local.split("@")[-1]
@@ -123,7 +123,7 @@ def check_new_alias(addr_from, addr_to):
 	sig = addr_to[dot_pos+1 : at_pos]
 	token_hash, _ = hash_token(token)
 
-	outsider_hash = sig[1:len(token_hash)+1]
+	outsider_hash = sig[len(version):len(token_hash)+1]
 
 	if token_hash != outsider_hash:
 		return
@@ -190,6 +190,28 @@ def rewrite_from_address(data, mailfrom):
 	return from_line.sub(new_from, data, count)
 
 
+def handle_mail(addr_from, addr_tos, data):
+	# apply transformation for sender
+	addr_from = normalize_address(addr_from)
+	for addr_to in addr_tos:
+		new_addr_from, from_changed = replace_with_disposable(addr_from, addr_to)
+		if from_changed:
+			addr_from = new_addr_from
+			print("rewrote to " + addr_from)
+			break
+
+	# register remote address for alias
+	for addr_to in addr_tos:
+		recipient = normalize_address(addr_to)
+		check_new_alias(addr_from, recipient)
+
+	if from_changed:
+		data = rewrite_from_address(data, addr_from)
+
+	server = smtplib.SMTP('localhost', 10026)
+	server.sendmail(addr_from, addr_tos, data)
+	server.quit()
+
 #--------------------------------------------------------------------------------
 # internal smtp server
 #--------------------------------------------------------------------------------
@@ -198,41 +220,13 @@ class DisposableRewriteSMTPServer(smtpd.SMTPServer):
 
 	def process_message(self, peer, mailfrom, rcpttos, data, **kwargs):
 		try:
-			# apply transformation for sender
-			mailfrom = normalize_address(mailfrom)
-			for addr_to in rcpttos:
-				new_mailfrom, from_changed = replace_with_disposable(mailfrom, addr_to)
-				if from_changed:
-					mailfrom = new_mailfrom
-					print("rewrote to " + mailfrom)
-					break
-
-			# register remote address for alias
-			for addr_to in rcpttos:
-				recipient = normalize_address(addr_to)
-				check_new_alias(mailfrom, recipient)
-
-			if from_changed:
-				data = rewrite_from_address(data, mailfrom)
-
-			server = smtplib.SMTP('localhost', 10026)
-			server.sendmail(mailfrom, rcpttos, data)
-			server.quit()
-
+			handle_mail(mailfrom, rcpttos, data)
 		except:
 			print('Undefined exception')
-
 		return
 
-# # example:
-# #
-# disp = create_disposable_alias("purpose", "me@example.com")
-# print("disposable email address: " + str(disp))
-# print("simulate received mail: " + str(check_new_alias("outsider@example.org", disp)))
-# print("replying using disposable:   " + str(replace_with_disposable("me@example.com", "outsider@example.org")))
-# print("replying without disposable: " + str(replace_with_disposable("me@example.com", "someone-else@example.org")))
-
-if __name__ == '__main__':
+def connect_database():
+	global conn
 	conn = create_psycopg2_connection()
 	conn.set_session(autocommit=True)
 
@@ -256,9 +250,42 @@ if __name__ == '__main__':
 			)
 			""")
 
+
+def start_smtp_server():
 	server = DisposableRewriteSMTPServer(('127.0.0.1', 10025), None)
 	asyncore.loop()
 	conn.close()
 
+# # example:
+# #
+# disp = create_disposable_alias("purpose", "me@example.com")
+# print("disposable email address: " + str(disp))
+# print("simulate received mail: " + str(check_new_alias("outsider@example.org", disp)))
+# print("replying using disposable:   " + str(replace_with_disposable("me@example.com", "outsider@example.org")))
+# print("replying without disposable: " + str(replace_with_disposable("me@example.com", "someone-else@example.org")))
+
+if __name__ == '__main__':
+	connect_database()
+
+	args = sys.argv[1:]
+	if args[0] == "--server":
+		start_smtp_server()
+
+	# pipe mode
+	if args[0] == "--from":
+		addr_from = args[1]
+		assert args[2] == "--"
+		rcptos = args[3:]
+
+		data = sys.stdin.buffer.read()
+		handle_mail(addr_from, rcptos, data)
+		conn.close()
+
+	if args[0] == "--create":
+		token = args[1]
+		local_dest = args[2]
+		disp = create_disposable_alias(token, local_dest)
+		print(disp)
+		conn.close()
 
 # vim: tabstop=4 softtabstop=0 noexpandtab shiftwidth=4 smarttab
