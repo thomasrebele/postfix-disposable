@@ -10,6 +10,8 @@ from hashlib import blake2b
 import base64
 import re
 import sys
+import datetime
+from email import utils
 
 prefix="dm-"
 
@@ -71,11 +73,11 @@ def hash_token(token):
 #   - token-hash (8-byte): a hash from the token to quickly verify the validity of the alias
 #   - local-hash (8-byte): allow multiple users
 version = b32enc(b'\x00')[:2]
-def create_disposable_alias(token, local):
+def create_disposable_alias(token, local_addr):
 	token = token.lower()
 	token_hash, token_h2 = hash_token(token)
 
-	local_hash1 = hash_str(local+secret)[:5]
+	local_hash1 = hash_str(local_addr+secret)[:5]
 	local_hash2 = bytes([a ^ b for (a,b) in zip(local_hash1, token_h2)])
 	local_hash = b32enc(local_hash2)[:8]
 
@@ -88,7 +90,7 @@ def create_disposable_alias(token, local):
 	# 	print("Decoding successful")
 
 	sig = version + token_hash + local_hash
-	domain = local.split("@")[-1]
+	domain = local_addr.split("@")[-1]
 	alias = prefix + token + "." + sig + "@" + domain
 
 	with conn.cursor() as cur:
@@ -97,10 +99,18 @@ def create_disposable_alias(token, local):
 			VALUES(%s, %s)
 			ON CONFLICT DO NOTHING
 			""",
-			[alias, local])
+			[alias, local_addr])
 
 	return alias
 
+
+def delete_disposable_alias(disposable_addr, local_addr):
+	with conn.cursor() as cur:
+		cur.execute("""
+			DELETE FROM disposable_aliases
+			WHERE alias = %s AND local = %s
+			""",
+			[disposable_addr, local_addr])
 
 
 def normalize_address(addr):
@@ -190,7 +200,63 @@ def rewrite_from_address(data, mailfrom):
 	return from_line.sub(new_from, data, count)
 
 
+def send_command_reply(addr_from, subject, data):
+	message_template="""From: disposable <{addr_from}>
+To: {addr_to}
+Subject: {subject}
+Date: {date}
+
+{body}
+"""
+
+	now = datetime.datetime.now()
+	date_str = utils.format_datetime(now)
+
+	d = {
+		"addr_from": service_addr,
+		"addr_to": addr_from,
+		"subject": subject,
+		"date": date_str,
+		"body": data
+		}
+	message = message_template.format(**d)
+
+	server = smtplib.SMTP('localhost', 10026)
+	server.sendmail(addr_from, addr_from, message)
+	server.quit()
+
+
+subject_pattern = re.compile(b'\nSubject: ([^\n]*)\n')
+def handle_command(addr_from, data):
+
+	subj_match = subject_pattern.search(data)
+	subj = subj_match.group(1)
+	subj = subj.decode()
+
+	words = subj.split(" ")
+	if words[0] == "create":
+		reply = "generated aliases:\n"
+		for token in words[1:]:
+			disp = create_disposable_alias(token, addr_from)
+			reply += "\n" + token + ": " + disp
+
+		send_command_reply(addr_from, "created addresses", reply)
+
+	elif words[0] == "delete":
+		for disposable_addr in words[1:]:
+			delete_disposable_alias(disposable_addr, addr_from)
+		reply = "\n".join(words[1:])
+		send_command_reply(addr_from, "deleted addresses", reply)
+
+	else:
+		send_command_reply(addr_from, "unknown command " + words[0], "")
+
+
 def handle_mail(addr_from, addr_tos, data):
+	if service_addr in addr_tos:
+		handle_command(addr_from, data)
+		return
+
 	# apply transformation for sender
 	addr_from = normalize_address(addr_from)
 	for addr_to in addr_tos:
@@ -263,6 +329,7 @@ def start_smtp_server():
 # print("simulate received mail: " + str(check_new_alias("outsider@example.org", disp)))
 # print("replying using disposable:   " + str(replace_with_disposable("me@example.com", "outsider@example.org")))
 # print("replying without disposable: " + str(replace_with_disposable("me@example.com", "someone-else@example.org")))
+
 
 if __name__ == '__main__':
 	connect_database()
