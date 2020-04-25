@@ -13,6 +13,7 @@ import sys
 import datetime
 from email import utils
 
+
 prefix="dm-"
 
 #--------------------------------------------------------------------------------
@@ -73,7 +74,7 @@ def hash_token(token):
 #   - token-hash (8-byte): a hash from the token to quickly verify the validity of the alias
 #   - local-hash (8-byte): allow multiple users
 version = b32enc(b'\x00')[:2]
-def create_disposable_alias(token, local_addr):
+def create_disposable_alias(token, local_addr, description):
 	token = token.lower()
 	token_hash, token_h2 = hash_token(token)
 
@@ -95,11 +96,11 @@ def create_disposable_alias(token, local_addr):
 
 	with conn.cursor() as cur:
 		cur.execute("""
-			INSERT INTO disposable_aliases(alias, local)
-			VALUES(%s, %s)
+			INSERT INTO disposable_aliases(alias, local, description)
+			VALUES(%s, %s, %s)
 			ON CONFLICT DO NOTHING
 			""",
-			[alias, local_addr])
+			[alias, local_addr, description])
 
 	return alias
 
@@ -233,11 +234,18 @@ def handle_command(addr_from, data):
 	subj = subj_match.group(1)
 	subj = subj.decode()
 
+	sep = header_body_sep.search(data)
+	if sep:
+		sep_pos = sep.start()
+	else:
+		sep_pos = 0
+	body = data[sep_pos:].decode().strip()
+
 	words = subj.split(" ")
 	if words[0] == "create":
 		reply = "generated aliases:\n"
 		for token in words[1:]:
-			disp = create_disposable_alias(token, addr_from)
+			disp = create_disposable_alias(token, addr_from, body)
 			reply += "\n" + token + ": " + disp
 
 		send_command_reply(addr_from, "created addresses", reply)
@@ -302,6 +310,7 @@ def connect_database():
 				alias varchar(256) NOT NULL,
 				local varchar(256) NOT NULL,
 				created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+				description TEXT NOT NULL,
 				PRIMARY KEY (alias)
 			)
 			""")
