@@ -24,10 +24,10 @@ for i in $(find -type f ! -path './.git/*' ! -path './__pycache__/*'); do
 			break;
 	esac
 
-	#if cmp --silent "$i" "$sovereign_dir/$dst"; then
-	#	echo "no changes for $i"
-	#else
+	if cmp --silent "$i" "$sovereign_dir/$dst"; then
+		echo "no changes for $i"
+	else
 		meld "$i" "$sovereign_dir/$dst"
-	#fi
+	fi
 
 done
