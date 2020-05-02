@@ -16,6 +16,12 @@ from email import utils
 
 prefix="dm-"
 
+re_header_end = re.compile(b'\n\n')
+re_header_field_end = re.compile(b'\n[^ \t]')
+re_from_line = re.compile(b'\n[Ff]rom: [^\n]*\n')
+re_subject_pattern = re.compile(b'\nSubject: ([^\n]*)\n')
+
+
 #--------------------------------------------------------------------------------
 # read configuration
 #--------------------------------------------------------------------------------
@@ -173,13 +179,10 @@ def replace_with_disposable(addr_from, addr_to):
 		return row[0], True
 
 
-
-header_body_sep = re.compile(b'\n\n')
-from_line = re.compile(b'\n[Ff]rom: [^\n]*\n')
 def rewrite_from_address(data, mailfrom):
 	"""Changes the sender of the message"""
 
-	sep = header_body_sep.search(data)
+	sep = re_header_end.search(data)
 	if not sep:
 		sep_pos = len(data)
 	else:
@@ -188,7 +191,7 @@ def rewrite_from_address(data, mailfrom):
 	next_start = 0
 	count = 0
 	while True:
-		from_pos = from_line.search(data, next_start)
+		from_pos = re_from_line.search(data, next_start)
 		print("found " + str(from_pos))
 		if not from_pos:
 			break
@@ -198,7 +201,8 @@ def rewrite_from_address(data, mailfrom):
 		count =+ 1
 
 	new_from = b'\nFrom: ' + mailfrom.encode() + b'\n'
-	return from_line.sub(new_from, data, count)
+	data = re_from_line.sub(new_from, data, count)
+	return data
 
 
 def send_command_reply(addr_from, subject, data):
@@ -234,7 +238,6 @@ def list_rindex(lst, item):
 	return -1
 
 
-subject_pattern = re.compile(b'\nSubject: ([^\n]*)\n')
 def handle_command(local_addr, args, body):
 	if args[0] == "create":
 		reply = "generated aliases:\n"
@@ -277,11 +280,11 @@ def handle_command(local_addr, args, body):
 
 def handle_mail(addr_from, addr_tos, data):
 	if service_addr in addr_tos:
-		subj_match = subject_pattern.search(data)
+		subj_match = re_subject_pattern.search(data)
 		subj = subj_match.group(1)
 		subj = subj.decode()
 
-		sep = header_body_sep.search(data)
+		sep = re_header_end.search(data)
 		if sep:
 			sep_pos = sep.start()
 		else:
@@ -312,6 +315,7 @@ def handle_mail(addr_from, addr_tos, data):
 	server = smtplib.SMTP('localhost', 10026)
 	server.sendmail(addr_from, addr_tos, data)
 	server.quit()
+
 
 #--------------------------------------------------------------------------------
 # internal smtp server
