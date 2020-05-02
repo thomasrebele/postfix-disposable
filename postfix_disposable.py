@@ -17,6 +17,7 @@ from email import utils
 prefix="dm-"
 
 re_header_end = re.compile(b'\n\n')
+re_dkim_sig = re.compile(b'\nDKIM-Signature:')
 re_header_field_end = re.compile(b'\n[^ \t]')
 re_from_line = re.compile(b'\n[Ff]rom: [^\n]*\n')
 re_subject_pattern = re.compile(b'\nSubject: ([^\n]*)\n')
@@ -179,6 +180,25 @@ def replace_with_disposable(addr_from, addr_to):
 		return row[0], True
 
 
+def remove_dkim_signature(data):
+	"""Removes the field "DKIM-Signature" from the mail header"""
+	sep = re_header_end.search(data)
+	if not sep:
+		sep_pos = len(data)
+	else:
+		sep_pos = sep.start()
+	dkim = re_dkim_sig.search(data)
+	if not dkim or dkim.start() > sep_pos:
+		return data
+
+	dkim_end = re_header_field_end.search(data, dkim.end())
+	if not dkim_end:
+		return data
+
+	return data[:dkim.start()] + data[dkim_end.start():]
+
+
+
 def rewrite_from_address(data, mailfrom):
 	"""Changes the sender of the message"""
 
@@ -312,6 +332,10 @@ def handle_mail(addr_from, addr_tos, data):
 	if from_changed:
 		data = rewrite_from_address(data, addr_from)
 
+	# remove DKIM signature
+	# - if from address has been rewritten, the signature is invalid
+	# - if nothing has changed, it would be added again by the milter
+	data = remove_dkim_signature(data)
 	server = smtplib.SMTP('localhost', 10026)
 	server.sendmail(addr_from, addr_tos, data)
 	server.quit()
