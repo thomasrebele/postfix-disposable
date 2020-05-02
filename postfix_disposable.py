@@ -124,7 +124,7 @@ def check_new_alias(addr_from, addr_to):
 	# if recipient starts with prefix
 	# add mailfrom to disposable_aliases
 	if not addr_to.startswith(prefix):
-		return
+		return "wrong prefix for " + addr_from
 
 	# extract token and hash for verification
 	at_pos = addr_to.rindex("@")
@@ -134,10 +134,10 @@ def check_new_alias(addr_from, addr_to):
 	sig = addr_to[dot_pos+1 : at_pos]
 	token_hash, _ = hash_token(token)
 
-	outsider_hash = sig[len(version):len(token_hash)+1]
+	outsider_hash = sig[len(version):][:len(token_hash)]
 
 	if token_hash != outsider_hash:
-		return
+		return "wrong hash for " + addr_to + " was " + outsider_hash + " (from signature " + sig + ")" + ", should have been " + token_hash
 
 	# fetch local address
 	with conn.cursor() as cur:
@@ -148,7 +148,7 @@ def check_new_alias(addr_from, addr_to):
 
 		row = cur.fetchone()
 		if row is None:
-			return
+			return "alias " + addr_to + " does not exist"
 	local = row[0]
 
 	# register
@@ -227,6 +227,13 @@ Date: {date}
 	server.quit()
 
 
+def list_rindex(lst, item):
+	for i in range(len(lst)-1, -1, -1):
+		if lst[i] == item:
+			return i
+	return -1
+
+
 subject_pattern = re.compile(b'\nSubject: ([^\n]*)\n')
 def handle_command(addr_from, data):
 
@@ -249,6 +256,27 @@ def handle_command(addr_from, data):
 			reply += "\n" + token + ": " + disp
 
 		send_command_reply(addr_from, "created addresses", reply)
+
+
+	elif words[0] == "register":
+		split_idx = list_rindex(words, "for")
+		if split_idx < 1:
+			send_command_reply(addr_from, "usage: register <token>... for <external_mail_addr>...", "")
+			return
+
+		reply = "generated aliases:\n"
+		disp_addrs = []
+		for token in words[1:split_idx]:
+			disp = create_disposable_alias(token, addr_from, body)
+			disp_addrs.append(disp)
+			reply += "\n" + token + ": " + disp
+		reply += "\n\nregistered addresses:\n"
+		for external_mail_addr in words[split_idx+1:]:
+			for disp in disp_addrs:
+				info = check_new_alias(external_mail_addr, disp)
+				reply += info + "\n"
+
+		send_command_reply(addr_from, "registered addresses", reply)
 
 	elif words[0] == "delete":
 		for disposable_addr in words[1:]:
