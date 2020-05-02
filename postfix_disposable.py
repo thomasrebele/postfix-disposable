@@ -235,62 +235,61 @@ def list_rindex(lst, item):
 
 
 subject_pattern = re.compile(b'\nSubject: ([^\n]*)\n')
-def handle_command(addr_from, data):
-
-	subj_match = subject_pattern.search(data)
-	subj = subj_match.group(1)
-	subj = subj.decode()
-
-	sep = header_body_sep.search(data)
-	if sep:
-		sep_pos = sep.start()
-	else:
-		sep_pos = 0
-	body = data[sep_pos:].decode().strip()
-
-	words = subj.split(" ")
-	if words[0] == "create":
+def handle_command(local_addr, args, body):
+	if args[0] == "create":
 		reply = "generated aliases:\n"
-		for token in words[1:]:
-			disp = create_disposable_alias(token, addr_from, body)
-			reply += "\n" + token + ": " + disp
+		for token in args[1:]:
+			disp = create_disposable_alias(token, local_addr, body)
+			reply += "\n\t" + token + ": " + disp
+		reply += "\n"
+		return "created addresses", reply
 
-		send_command_reply(addr_from, "created addresses", reply)
 
-
-	elif words[0] == "register":
-		split_idx = list_rindex(words, "for")
+	if args[0] == "register":
+		split_idx = list_rindex(args, "for")
 		if split_idx < 1:
-			send_command_reply(addr_from, "usage: register <token>... for <external_mail_addr>...", "")
-			return
+			return "usage: register <token>... for <external_mail_addr>...", ""
 
 		reply = "generated aliases:\n"
 		disp_addrs = []
-		for token in words[1:split_idx]:
-			disp = create_disposable_alias(token, addr_from, body)
+		for token in args[1:split_idx]:
+			disp = create_disposable_alias(token, local_addr, body)
 			disp_addrs.append(disp)
-			reply += "\n" + token + ": " + disp
-		reply += "\n\nregistered addresses:\n"
-		for external_mail_addr in words[split_idx+1:]:
+			reply += "\n\t" + token + ": " + disp
+		reply += "\n\nregistered rewrites:\n"
+		for external_mail_addr in args[split_idx+1:]:
 			for disp in disp_addrs:
 				info = check_new_alias(external_mail_addr, disp)
-				reply += info + "\n"
+				reply += "\n\t" + info
+		reply += "\n"
 
-		send_command_reply(addr_from, "registered addresses", reply)
+		return "registered addresses", reply
 
-	elif words[0] == "delete":
-		for disposable_addr in words[1:]:
-			delete_disposable_alias(disposable_addr, addr_from)
-		reply = "\n".join(words[1:])
-		send_command_reply(addr_from, "deleted addresses", reply)
 
-	else:
-		send_command_reply(addr_from, "unknown command " + words[0], "")
+	if args[0] == "delete":
+		for disposable_addr in args[1:]:
+			delete_disposable_alias(disposable_addr, local_addr)
+		reply = "\n".join(args[1:])
+		return "deleted addresses", reply
+
+	return "unknown command " + args[0], ""
 
 
 def handle_mail(addr_from, addr_tos, data):
 	if service_addr in addr_tos:
-		handle_command(addr_from, data)
+		subj_match = subject_pattern.search(data)
+		subj = subj_match.group(1)
+		subj = subj.decode()
+
+		sep = header_body_sep.search(data)
+		if sep:
+			sep_pos = sep.start()
+		else:
+			sep_pos = 0
+		body = data[sep_pos:].decode().strip()
+		args = subj.split(" ")
+		result = handle_command(addr_from, args, body)
+		send_command_reply(local_addr, result[0], result[1])
 		return
 
 	# apply transformation for sender
@@ -385,11 +384,12 @@ if __name__ == '__main__':
 		handle_mail(addr_from, rcptos, data)
 		conn.close()
 
-	if args[0] == "--create":
-		token = args[1]
-		local_dest = args[2]
-		disp = create_disposable_alias(token, local_dest)
-		print(disp)
+	if args[0] == "--manage":
+		local_addr = args[1]
+		# TODO: description for create
+		result = handle_command(local_addr, args[2:], "")
+		print(result[0])
+		print(result[1])
 		conn.close()
 
 # vim: tabstop=4 softtabstop=0 noexpandtab shiftwidth=4 smarttab
